@@ -45,23 +45,47 @@ static cairo_surface_t *rotate_ccw_90(cairo_surface_t *src) {
     return out;
 }
 
-// Nearest-neighbor resize (Pillow's Image.NEAREST). Keeps bar edges crisp.
-static cairo_surface_t *resize_nearest(cairo_surface_t *src, int new_w, int new_h) {
-    int sw = cairo_image_surface_get_width(src);
-    int sh = cairo_image_surface_get_height(src);
-    if (sw == new_w && sh == new_h) {
-        // Return a copy so we can uniformly destroy the returned surface.
-        cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, sw, sh);
-        cairo_t *cr = cairo_create(out);
-        cairo_set_source_surface(cr, src, 0, 0);
-        cairo_paint(cr);
-        cairo_destroy(cr);
-        return out;
-    }
-    cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, new_w, new_h);
+// The PPD's printable area for MEDIA_CODE (lw450.ppd, w72h154: page
+// 72 x 153.12 pt, ImageableArea "4.08 4.32 69.12 146.64"), in 300-dpi pixels
+// of the portrait page. CUPS rasterises only this area and fit-to-page scales
+// whatever it is given into it, so the image handed to lp must be exactly
+// this size for the print to come out 1:1.
+#define PRINTABLE_LEFT_PX 17   /* 4.08 pt */
+#define PRINTABLE_TOP_PX  27   /* 153.12 - 146.64 = 6.48 pt */
+#define PRINTABLE_W_PX    271  /* 69.12 - 4.08 = 65.04 pt */
+#define PRINTABLE_H_PX    593  /* 146.64 - 4.32 = 142.32 pt */
+
+// Whole-pixel nudge from the environment, for lining the print up with the
+// roll as it actually sits in the printer. X is across the head, Y along the
+// feed, both in 300-dpi pixels.
+static int env_px(const char *name) {
+    const char *v = getenv(name);
+    return (v && *v) ? atoi(v) : 0;
+}
+
+// Lay the rendered label out on the stock that is in the printer. The page
+// asks for one label size and the roll may be another: centre the label on
+// the stock at its own size (never stretched, shrunk only if it is larger
+// than the stock) and return just the printable part. Whole-pixel placement
+// and nearest-neighbour sampling keep barcode bars crisp. Caller destroys
+// both surfaces.
+static cairo_surface_t *place_on_stock(cairo_surface_t *label) {
+    int lw = cairo_image_surface_get_width(label);
+    int lh = cairo_image_surface_get_height(label);
+    double s = 1.0;
+    if (lw > short_px()) s = (double)short_px() / lw;
+    if (lh * s > long_px()) s = (double)long_px() / lh;
+    double x = (short_px() - lw * s) / 2.0 - PRINTABLE_LEFT_PX + env_px("DYMO_NUDGE_X");
+    double y = (long_px()  - lh * s) / 2.0 - PRINTABLE_TOP_PX  + env_px("DYMO_NUDGE_Y");
+
+    cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+                                                      PRINTABLE_W_PX, PRINTABLE_H_PX);
     cairo_t *cr = cairo_create(out);
-    cairo_scale(cr, (double)new_w / sw, (double)new_h / sh);
-    cairo_set_source_surface(cr, src, 0, 0);
+    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+    cairo_paint(cr);
+    cairo_translate(cr, (double)lround(x), (double)lround(y));
+    cairo_scale(cr, s, s);
+    cairo_set_source_surface(cr, label, 0, 0);
     cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_NEAREST);
     cairo_paint(cr);
     cairo_destroy(cr);
@@ -97,8 +121,8 @@ static cairo_status_t write_to_fd(void *closure, const unsigned char *data,
     return CAIRO_STATUS_SUCCESS;
 }
 
-// Prepare a portrait-oriented PNG at exact media pixel dimensions. Returns a
-// malloc'd path to a tmp PNG; caller frees and unlinks.
+// Prepare a portrait-oriented PNG the size of the media's printable area.
+// Returns a malloc'd path to a tmp PNG; caller frees and unlinks.
 static char *prepare_print_png(const char *input_png) {
     cairo_surface_t *src = cairo_image_surface_create_from_png(input_png);
     if (cairo_surface_status(src) != CAIRO_STATUS_SUCCESS) {
@@ -111,7 +135,7 @@ static char *prepare_print_png(const char *input_png) {
 
     cairo_surface_t *rotated = (w > h) ? rotate_ccw_90(src) : NULL;
     cairo_surface_t *oriented = rotated ? rotated : src;
-    cairo_surface_t *resized = resize_nearest(oriented, short_px(), long_px());
+    cairo_surface_t *resized = place_on_stock(oriented);
     if (rotated) cairo_surface_destroy(rotated);
     cairo_surface_destroy(src);
 

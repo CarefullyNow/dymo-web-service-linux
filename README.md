@@ -168,6 +168,18 @@ to `https://www.cellartracker.com/dymo.asp` once the cert is trusted.
 
 ---
 
+## This fork
+
+One change from [loadfix/dymo-web-service-linux](https://github.com/loadfix/dymo-web-service-linux): where the label lands on the roll.
+
+Upstream stretches every label to fill the 1" x 2-1/8" stock, then lets `fit-to-page` squeeze that into the printable area. A label designed for a smaller stock comes out distorted. This fork keeps the label at its designed size, centres it on the stock, and hands CUPS exactly the PPD's printable area, so the print is 1:1 and barcode bars land on whole dots. A label larger than the stock is still shrunk to fit.
+
+`DYMO_NUDGE_X` and `DYMO_NUDGE_Y` shift the result when a roll sits off-centre (see Configuration).
+
+The printable area is fixed for `lw450.ppd`, media `w72h154`. For another printer or roll, change the `MEDIA_*` and `PRINTABLE_*` lines in `src/printing.c`.
+
+---
+
 ## Configuration
 
 `/etc/dymo-web-service/dymo-web-service.conf` — KEY=VALUE pairs read by
@@ -188,6 +200,7 @@ sudo systemctl restart dymo-web-service
 | `DYMO_ALLOWED_ORIGINS` | `https://www.cellartracker.com` | CORS allowlist (comma-separated). Unknown origins get no CORS headers and the browser blocks the request |
 | `DYMO_MAX_BODY_BYTES` | `262144` | POSTs larger than this get `413` |
 | `DYMO_LOG_DIR` | `/var/log/dymo-web-service` | Per-request subdirs capture the raw payload + rendered PNGs |
+| `DYMO_NUDGE_X` / `DYMO_NUDGE_Y` | `0` | Shift the print by whole 300-dpi pixels: X across the print head, Y along the feed. For a roll that sits off the driver's reference edge |
 
 ---
 
