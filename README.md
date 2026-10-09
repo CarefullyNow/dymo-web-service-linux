@@ -180,6 +180,24 @@ The printable area is fixed for `lw450.ppd`, media `w72h154`. For another printe
 
 ---
 
+## Print queue tips
+
+The daemon prints through whichever CUPS queue `DYMO_PRINTER` names. Two settings on that queue are worth having, most of all on a laptop that leaves the printer's network:
+
+```sh
+sudo lpadmin -p QUEUE -o printer-error-policy=abort-job
+sudo lpadmin -p QUEUE -v 'socket://PRINTER-IP:9100/?contimeout=30'   # network printers only
+```
+
+- `abort-job` drops a job that fails. The default, `stop-printer`, keeps it and sends it again when the queue is resumed.
+- `contimeout=30` makes the socket backend give up on a printer it cannot reach. By default it keeps trying for a week, so a label sent while the printer is out of reach prints by itself once it is reachable again. The slash before the `?` is required; `lpadmin` rejects the URI without it.
+
+Labels can carry personal data. The daemon saves every payload under `DYMO_LOG_DIR`, and cupsd keeps each job's document for a day unless `cupsd.conf` has `PreserveJobFiles No`. Clear the log directory on a schedule, or point it at a tmpfs.
+
+Some sites only try `https://127.0.0.1:41951` and never look at 41952. For those, swap `DYMO_HTTP_PORT` and `DYMO_HTTPS_PORT`.
+
+---
+
 ## Configuration
 
 `/etc/dymo-web-service/dymo-web-service.conf` — KEY=VALUE pairs read by
